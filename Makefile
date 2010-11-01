@@ -4,14 +4,16 @@
 
 IGFILE_INCDIR = $(PWD)
 XERCES_INCDIR = /opt/local/include
-EVERYTHING_INCLUDE = -I$(IGFILE_INCDIR) -I$(XERCES_INCDIR)
+COIN_INCDIR = /opt/local/include
+EVERYTHING_INCLUDE = -I$(IGFILE_INCDIR) -I$(XERCES_INCDIR) -I$(COIN_INCDIR)
 
 ##################
 # Libraries
 ##################
 
 XERCES_LIBS = -L/opt/local/lib -lxerces-c
-EVERYTHING_LIBS = $(XERCES_LIBS)
+COIN_LIBS = -L/opt/local/lib -lCoin
+EVERYTHING_LIBS = $(XERCES_LIBS) $(COIN_LIBS)
 
 ##################
 # Compilers

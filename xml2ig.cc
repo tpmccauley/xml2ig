@@ -10,11 +10,53 @@
 #include <iostream>
 #include <vector>
 #include <fstream>
+#include <math.h>
+
+#include <Inventor/SoPrimitiveVertex.h>
+#include <Inventor/actions/SoCallbackAction.h>
+#include <Inventor/nodekits/SoNodeKit.h>
+#include <Inventor/nodes/SoLineSet.h>
+#include <Inventor/SbVec3f.h>
+#include <Inventor/SoDB.h>
+#include <Inventor/nodes/SoSeparator.h>
 
 using namespace xercesc;
 
+static const double C = 0.299792458; // speed of light in m/ns
+
+static double D0 = 0.0;
+static double D  = 0.0;
+static double T0 = 0.0;
+static double T  = 0.0;
+
+static std::vector<IgV4d> sHits;
+
+static 
+void getHits(void* userdata, SoCallbackAction*,
+             const SoPrimitiveVertex* v1,
+             const SoPrimitiveVertex* v2)
+{
+  const SbVec3f& point = v1->getPoint();
+ 
+  double X = point[0];
+  double Y = point[1];
+  double Z = point[2];
+  
+  D = sqrt(X*X+Y*Y+Z*Z);
+  T = (D-D0)/C + T0;
+  D0 = D;
+  T0 = T;
+
+  sHits.push_back(IgV4d(T,X,Y,Z));
+}
+
 int main(int argc, char* argv[])
 {
+  SoDB::init();
+  SoNodeKit::init();
+  
+  //SoLineSet::initClass();
+
   try
   {
     XMLPlatformUtils::Initialize();
@@ -77,7 +119,8 @@ int main(int argc, char* argv[])
   /* Now we can create and fill the ig file */
   IgDataStorage* storage = new IgDataStorage;
   
-  IgCollection& event = storage->getCollection("Event_V2");
+  IgCollection& event = storage->getCollection("Event_V3");
+  IgProperty EXP = event.addProperty("experiment", std::string("ATLAS"));
   IgProperty RUN   = event.addProperty("run", 0);
   IgProperty EVENT = event.addProperty("event", 0);
   IgProperty LS    = event.addProperty("ls", 0);
@@ -85,7 +128,8 @@ int main(int argc, char* argv[])
   IgProperty BX    = event.addProperty("bx", 0);
   IgProperty TIME  = event.addProperty("time", std::string());
   IgProperty LOCALTIME = event.addProperty("localtime", std::string());
- 
+  IgProperty MC = event.addProperty("mc", int(0));
+
   char* runNumber = 
     XMLString::transcode(root->getAttribute(XMLString::transcode("runNumber")));
   
@@ -96,6 +140,7 @@ int main(int argc, char* argv[])
     XMLString::transcode(root->getAttribute(XMLString::transcode("dateTime")));
   
   IgCollectionItem e = event.create();
+  e[EXP] = std::string("ATLAS");
   e[RUN] = atoi(runNumber);
   e[EVENT] = atoi(eventNumber);
 
@@ -181,7 +226,7 @@ int main(int argc, char* argv[])
           int n = 0;
           while ( token = tokens.nextToken() )
           {
-            polylineX.push_back(atof(XMLString::transcode(token)));
+            polylineX.push_back(atof(XMLString::transcode(token))/100.0);
           }
         }
 
@@ -198,7 +243,7 @@ int main(int argc, char* argv[])
           int n = 0;
           while ( token = tokens.nextToken() )
           {
-            polylineY.push_back(atof(XMLString::transcode(token)));
+            polylineY.push_back(atof(XMLString::transcode(token))/100.0);
           }
         }
 
@@ -215,23 +260,24 @@ int main(int argc, char* argv[])
           int n = 0;
           while ( token = tokens.nextToken() )
           {
-            polylineZ.push_back(atof(XMLString::transcode(token)));
+            polylineZ.push_back(atof(XMLString::transcode(token))/100.0);
           }
         }
       }
     }
   }
 
-  IgCollection& tracks = storage->getCollection("ATLASTracks_V1");
+  IgCollection& tracks = storage->getCollection("Tracks_V3");
+  IgProperty ID  = tracks.addProperty("id", int(0));
   IgProperty PT  = tracks.addProperty("pt", 0.0);
-  IgProperty CH  = tracks.addProperty("charge", 0);
-  IgProperty PHI = tracks.addProperty("phi", 0.0);
-  IgProperty ETA = tracks.addProperty("eta", 0.0);
-
-  IgCollection& points = storage->getCollection("Points_V1");
-  IgProperty POS = points.addProperty("pos", IgV3d());
   
-  IgAssociations& trackpoints = storage->getAssociations("ATLASTrackPoints_V1");
+  IgCollection& hits = storage->getCollection("Hits_V1");
+  IgProperty HT = hits.addProperty("t", 0.0);
+  IgProperty X = hits.addProperty("x", 0.0);
+  IgProperty Y = hits.addProperty("y", 0.0);
+  IgProperty Z = hits.addProperty("z", 0.0);
+  
+  IgAssociations& trackhits = storage->getAssociations("TrackHits_V1");
 
   unsigned int pl = 0;
   unsigned int ple = 0;
@@ -240,10 +286,76 @@ int main(int argc, char* argv[])
   assert(polylineX.size() == polylineY.size());
   assert(polylineZ.size() == polylineX.size());
 
-  //std::cout<<"There are "<< pt.size() <<" tracks"<<std::endl;
+  std::cout<<"There are "<< pt.size() <<" tracks"<<std::endl;
+
+  SoSeparator* sep = new SoSeparator;
 
   for ( size_t i = 0, ie = pt.size(); i != ie; ++i )
   {
+    SoVertexProperty* properties = new SoVertexProperty;
+    int n = 0;
+    
+    ple += numPolyline[i];
+    
+    double x,y,z;
+
+    for ( ; pl != ple; ++pl )
+    {   
+      x = polylineX[pl];
+      y = polylineY[pl];
+      z = polylineZ[pl];
+
+      SbVec3f pos(x,y,z);
+      properties->vertex.set1Value(n,pos);
+      n++;
+    }
+
+    std::cout<<"Making line set"<<std::endl;
+    SoLineSet* line = new SoLineSet;
+    line->vertexProperty = properties;
+    sep->addChild(line);
+    sep->ref();
+
+    IgCollectionItem t = tracks.create();
+    t[PT] = pt[i];
+   
+    D0 = 0.0;
+    D  = 0.0;
+    T0 = 0.0;
+    T  = 0.0;
+ 
+    SoCallbackAction cba;
+    cba.addLineSegmentCallback(SoShape::getClassTypeId(),
+                               getHits, NULL);
+    
+    std::cout<<"Iterating over hits"<<std::endl;
+    for ( std::vector<IgV4d>::iterator hi = sHits.begin(), hiEnd = sHits.end();
+          hi != hiEnd; ++hi )
+    {
+      IgCollectionItem h = hits.create();
+      
+      h[HT] = (*hi)[0];
+      h[X] = (*hi)[1];
+      h[Y] = (*hi)[2];
+      h[Z] = (*hi)[3];
+
+      trackhits.associate(t,h);      
+    }
+
+    sHits.clear();
+
+    cba.apply(sep);
+    //sep->unref();
+  }
+  
+  /*
+  for ( size_t i = 0, ie = pt.size(); i != ie; ++i )
+  {
+    D0 = 0.0;   
+    D  = 0.0;
+    T0 = 0.0;
+    T  = 0.0;
+
     IgCollectionItem t = tracks.create();
     t[PT] = pt[i];
 
@@ -251,15 +363,30 @@ int main(int argc, char* argv[])
 
     ple += numPolyline[i];
 
+    double x,y,z;
+
     for ( ; pl != ple; ++pl )
     {   
-      IgCollectionItem p = points.create();
-      p[POS] = IgV3d(polylineX[pl], polylineY[pl], polylineZ[pl]);
+      x = polylineX[pl];
+      y = polylineY[pl];
+      z = polylineZ[pl];
 
-      trackpoints.associate(t, p);
+      D = sqrt(x*x+y*y+z*z);
+      T = (D-D0)/C + T0;
+      D0 = D;
+      T0 = T;
+
+      IgCollectionItem h = hits.create();
+      h[HT] = T;
+      h[X] = x;
+      h[Y] = y;
+      h[Z] = z;
+   
+
+      trackhits.associate(t, h);
     }
   }
-
+  */
   std::cout<<"Done"<<std::endl;
   XMLPlatformUtils::Terminate();
 
